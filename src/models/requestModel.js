@@ -21,7 +21,7 @@ const subSchemaCrawlMatches = new Schema({
   pageType: String,
   urlRegEx: String,  // required
   waitForSelector: String,
-  parser: subSchemaParser
+  data: subSchemaParser
 }, { _id: false });
 
 const subSchemaParserResult = new Schema({
@@ -32,19 +32,29 @@ const subSchemaParserResult = new Schema({
 const subSchemaStage = new Schema({
   stage: {
     type: String,
-    enum: ['NEW', 'PARSED', 'ERROR']
+    enum: ['NEW', 'SCHEDULED', 'PARSED', 'ERROR']
   },
   timestamp: { type: Date, default: Date.now() }
 }, { _id: false })
 
 const requestSchema = new Schema({
-  executionId: {
-    type: Schema.Types.ObjectId,
-    required: true
+  website: {
+    type: String,
+    required: true,
+    ref: "websites"
   },
   stages: [subSchemaStage],
-  url: String,
+  url: {
+    type: String,
+    required: true
+  },
   loadedUrl: String,
+  createdAt: {
+    type: Date,
+    default: Date.now()
+  },
+  scheduledAt: Date,
+
   queuedAt: Date,
   loadingStartedAt: Date,
   loadingTimeMs: Number,
@@ -84,15 +94,15 @@ const requestSchema = new Schema({
   errorInfo: String
 });
 
-requestSchema.index({ executionId: 1, uniqueUrl: 1 }, { unique: true });
+requestSchema.index({ website: 1, url: 1 }, { unique: true });
 
 requestSchema.statics = {
 
-  saveNew: Promise.method(function (data) {
+  saveNew: Promise.method(function (data, identified = false) {
     const reqSave = new Requests({
-      executionId: data.executionId,
+      website: data.website,
       url: data.url,
-      uniqueUrl: data.uniqueUrl
+
     });
     reqSave.stages.push({ stage: 'NEW' });
     const err = reqSave.validateSync();
@@ -100,21 +110,28 @@ requestSchema.statics = {
     return /*this.exec();*/  reqSave.save();
   }),
 
+  getIdByUrl: Promise.method(function (url) {
+    return this.model('requests')
+      .findOne({ "url": url }, { "_id": 1 })
+      .exec(function (err, rez) {
+        if (err) throw err;
+        return rez;
+      });
+  }),
+
   upsertAfterParser: Promise.method(function (update, options) {
-    console.log('works');
     options = options || { new: true, runValidators: true, upsert: true, setDefaultsOnInsert: true };
     const conditions = {
-      executionId: mongoose.Types.ObjectId(update.executionId),
-      uniqueUrl: update.uniqueUrl
+      _id: mongoose.Types.ObjectId(update.requestId)
     };
-    return new Promise((resolve, reject) => {
-      Requests.findOneAndUpdate(conditions, {
+    return this
+      .findOneAndUpdate(conditions, {
         $set: {
           html: {
-            toLength: update.html.toLength
-            // toString: update.html.toString,
-            // allLinks: update.html.allLinks,
-            // followingLinks: update.html.followingLinks
+            toLength: update.html.toLength || 0,
+            toString: update.html.toString || '',
+            allLinks: update.html.allLinks || [],
+            followingLinks: update.html.followingLinks || []
           },
 
           parserStartedAt: update.parserStartedAt,
@@ -134,7 +151,7 @@ requestSchema.statics = {
           loadingStartedAt: update.loadingStartedAt,
           loadingTimeMs: update.loadingTimeMs || 0,
 
-          executionId: update.executionId,
+          website: update.website,
           url: update.url,
           uniqueUrl: update.uniqueUrl,
 
@@ -142,34 +159,30 @@ requestSchema.statics = {
         },
         $push: { stages: { stage: 'PARSED', timestamp: Date.now() } }
       }, options)
-        .exec(function (err, rez) {
-          if (err) reject(err);
-          console.log(rez);
-          return resolve(rez);
-        });
-    })
+      .exec(function (err, rez) {
+        if (err) throw err;
+        return rez;
+      });
   }),
 
   upsertAfterError: Promise.method(function (upsert) {
     options = { new: true, runValidators: true, upsert: true, setDefaultsOnInsert: true };
     const conditions = {
-      executionId: mongoose.Types.ObjectId(upsert.executionId),
-      uniqueUrl: upsert.uniqueUrl
+      _id: mongoose.Types.ObjectId(upsert.requestId)
     };
-    return new Promise((resolve, reject) => {
-      Requests.findOneAndUpdate(conditions, {
+    return this
+      .findOneAndUpdate(conditions, {
         $set: {
           errorInfo: upsert.errorInfo,
           uniqueUrl: upsert.uniqueUrl,
           url: upsert.url,
-          executionId: upsert.executionId
+          website: upsert.website
         },
         $push: { stages: { stage: 'ERROR', timestamp: Date.now() } }
       }, options).exec(function (err, rez) {
-        if (err) reject(err);
-        return resolve(rez);
+        if (err) throw err;
+        return rez;
       });
-    })
   }),
   // unique statics mongo shell test query
   //     db.getCollection('requests').aggregate([

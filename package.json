@@ -1,6 +1,6 @@
 {
   "name": "trackinops-parser",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "description": "TrackinOps Parser micro process enabling the use of chromium and extracting data from crawled webpages.",
   "scripts": {

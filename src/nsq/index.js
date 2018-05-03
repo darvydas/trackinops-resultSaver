@@ -69,11 +69,18 @@ const startResultsSubscriptions = function () {
   NSQreader.on('message',
     function (msg) {
       console.info("Received:", msg.json().data.url);
+      console.info("Full object:", msg.json());
 
       return saveToMongo(msg.json().method, msg.json().data)
-        .finally((saveResponse) => {
-          console.info(`${saveResponse} saved ${msg.json().method} for ${msg.json().data.url}`);
+        // .finally((saveResponse) => {
+        .then((saveResponse) => {
+          console.info(`Saved: ${saveResponse} ${msg.json().method} for ${msg.json().data.url}`);
           return msg.finish();
+        })
+        .catch((error) => {
+          console.info(`${msg.json().method} for ${msg.json().data.url} \n ${error}`);
+          if(msg.attempts > 50) return msg.finish();
+          return msg.requeue(delay = msg.attempts * 60 * 1000, backoff = true);
         });
     })
 }
